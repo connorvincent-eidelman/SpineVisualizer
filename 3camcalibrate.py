@@ -1,8 +1,6 @@
 import cv2
 import numpy as np
 import mediapipe as mp
-import time
-import os
 
 # ---------- CONFIG ----------
 CAMERA_IDS = [0, "http://192.168.1.143:4747/video", "http://192.168.1.174:4747/video"]
@@ -13,83 +11,17 @@ CALIBRATION_SAMPLES = 15
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose(static_image_mode=False, model_complexity=1)
 
+print("Opening cameras...")
+caps = [cv2.VideoCapture(cid) for cid in CAMERA_IDS]
+for cap in caps:
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
 # ---------- FUNCTIONS ----------
 def capture_frames_from_all_cams():
-    frames = []
-    for i, cap in enumerate(caps):
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            print(f"Warning: Frame not received from camera {i}")
-            frames.append(np.zeros((480, 640, 3), dtype=np.uint8))  # placeholder
-        else:
-            frames.append(frame)
-    return frames
+    return [cap.read()[1] for cap in caps]
 
 def find_chessboard_corners(frames):
-    objp = np.zeros((CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
-    objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
-
-    objpoints = []
-    imgpoints = [[] for _ in range(len(frames))]
-
-    count = 0
-    print("Press 'c' to capture calibration sample, or ESC to skip.")
-
-    while count < CALIBRATION_SAMPLES:
-        frames = capture_frames_from_all_cams()
-        display_frames = []
-
-        for i, frame in enumerate(frames):
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
-
-            status_text = f"Camera {i}: {'Found' if ret else 'Not Found'}"
-
-            if ret:
-                # Refine corners and draw
-                corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1),
-                                             (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
-                cv2.drawChessboardCorners(frame, CHECKERBOARD, corners2, ret)
-                status_text += f" | Sample {len(imgpoints[i])}/{CALIBRATION_SAMPLES}"
-
-            # Overlay text info
-            cv2.putText(frame, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                        (0, 255, 0) if ret else (0, 0, 255), 2)
-
-            display_frames.append(cv2.resize(frame, (640, 480)))
-
-        # Show stacked camera views
-        stacked = cv2.vconcat(display_frames)
-        cv2.imshow("Calibration - Press 'c' to capture, ESC to skip", stacked)
-
-        key = cv2.waitKey(1)
-        if key == ord('c'):
-            found_all = True
-            for i, frame in enumerate(frames):
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
-                if ret:
-                    corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1),
-                                                 (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
-                    if count == 0:
-                        objpoints.append(objp)
-                    imgpoints[i].append(corners2)
-                else:
-                    found_all = False
-
-            if found_all:
-                print(f"Sample {count+1} captured.")
-                count += 1
-            else:
-                print("Checkerboard not found in all cameras. Try again.")
-
-        elif key == 27:  # ESC
-            print("Calibration canceled/skipped.")
-            break
-
-    cv2.destroyWindow("Calibration - Press 'c' to capture, ESC to skip")
-    return objpoints, imgpoints
-
     objp = np.zeros((CHECKERBOARD[0]*CHECKERBOARD[1], 3), np.float32)
     objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
 
@@ -97,34 +29,63 @@ def find_chessboard_corners(frames):
     imgpoints = [[] for _ in range(len(frames))]
 
     count = 0
-    print("Press 'c' to capture calibration sample or ESC to skip calibration.")
-    while count < CALIBRATION_SAMPLES:
-        key = cv2.waitKey(0)
-        if key == ord('c'):
-            frames = capture_frames_from_all_cams()
-            for i, frame in enumerate(frames):
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
-                if ret:
-                    objpoints.append(objp)
-                    corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1),
-                                                 (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
-                    imgpoints[i].append(corners2)
-                    print(f"Captured corners from camera {i}")
-            count += 1
-        elif key == 27:  # ESC
-            print("Calibration skipped.")
-            break
+    print("Calibration mode: Press [c] to capture, [Esc] to cancel.")
 
+    while count < CALIBRATION_SAMPLES:
+        frames = capture_frames_from_all_cams()
+        all_detected = True
+        detected_corners = []
+
+        for i, frame in enumerate(frames):
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
+
+            if ret:
+                corners2 = cv2.cornerSubPix(
+                    gray, corners, (11, 11), (-1, -1),
+                    (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+                )
+                frame = cv2.drawChessboardCorners(frame, CHECKERBOARD, corners2, ret)
+                detected_corners.append(corners2)
+            else:
+                all_detected = False
+                detected_corners.append(None)
+                cv2.putText(frame, "Checkerboard Not Found", (30, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+            cv2.putText(frame, f"Cam {i}", (10, frame.shape[0]-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            frames[i] = frame
+
+        # Show all frames stacked vertically
+        stacked = cv2.vconcat([cv2.resize(f, (640, 480)) for f in frames])
+        cv2.imshow("Calibration View", stacked)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('c'):
+            if all_detected:
+                print(f"Captured sample {count + 1}/{CALIBRATION_SAMPLES}")
+                objpoints.append(objp)
+                for i in range(len(frames)):
+                    imgpoints[i].append(detected_corners[i])
+                count += 1
+            else:
+                print("Calibration failed: checkerboard not found on all cameras.")
+        elif key == 27:
+            print("Calibration canceled.")
+            cv2.destroyAllWindows()
+            exit()
+
+    cv2.destroyAllWindows()
     return objpoints, imgpoints
 
 def calibrate_cameras(objpoints, imgpoints, frames):
     calibrations = []
     for i in range(len(frames)):
         gray = cv2.cvtColor(frames[i], cv2.COLOR_BGR2GRAY)
-        ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-            objpoints, imgpoints[i], gray.shape[::-1], None, None)
+        ret, mtx, dist, _, _ = cv2.calibrateCamera(objpoints, imgpoints[i], gray.shape[::-1], None, None)
         calibrations.append((mtx, dist))
+        print(f"Camera {i} calibrated. Reprojection error: {ret:.4f}")
     return calibrations
 
 def get_shoulder_data(frame):
@@ -134,30 +95,22 @@ def get_shoulder_data(frame):
 
     if results.pose_landmarks:
         landmarks = results.pose_landmarks.landmark
-        try:
-            l_sh = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
-            r_sh = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+        l_sh = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
+        r_sh = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER]
 
-            x1, y1 = int(l_sh.x * w), int(l_sh.y * h)
-            x2, y2 = int(r_sh.x * w), int(r_sh.y * h)
-            angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
-            offset = x2 - x1
+        x1, y1 = int(l_sh.x * w), int(l_sh.y * h)
+        x2, y2 = int(r_sh.x * w), int(r_sh.y * h)
+        angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+        offset = x2 - x1
 
-            return (x1, y1), (x2, y2), angle, offset
-        except IndexError:
-            pass
+        return (x1, y1), (x2, y2), angle, offset
     return None, None, None, None
 
 # ---------- MAIN ----------
-print("Opening cameras...")
-caps = [cv2.VideoCapture(cid) for cid in CAMERA_IDS]
-for i, cap in enumerate(caps):
-    if not cap.isOpened():
-        raise RuntimeError(f"Failed to open camera {CAMERA_IDS[i]}")
-
 print("Starting calibration...")
-objpoints, imgpoints = find_chessboard_corners(capture_frames_from_all_cams())
-calibrations = calibrate_cameras(objpoints, imgpoints, capture_frames_from_all_cams())
+initial_frames = capture_frames_from_all_cams()
+objpoints, imgpoints = find_chessboard_corners(initial_frames)
+calibrations = calibrate_cameras(objpoints, imgpoints, initial_frames)
 print("Calibration complete. Starting live posture tracking...")
 
 while True:
@@ -171,8 +124,10 @@ while True:
             cv2.circle(frame, p1, 6, (255, 0, 0), -1)
             cv2.circle(frame, p2, 6, (0, 255, 0), -1)
             cv2.line(frame, p1, p2, (0, 255, 255), 2)
-            cv2.putText(frame, f"Angle: {angle:.1f} deg", (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(frame, f"Offset: {offset:.1f}px", (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Angle: {angle:.1f} deg", (30, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Offset: {offset:.1f}px", (30, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         display.append(frame)
 
