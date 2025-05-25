@@ -18,9 +18,7 @@ calibrations = calibrate_individual_cameras(objpoints, imgpoints, caps)
 
 # Stereo projection matrices
 proj_mats = []
-for i, ((mtx, dist), (rvecs, tvecs)) in enumerate(
-        zip(calibrations, [cv2.calibrateCamera(objpoints, imgpoints[i], caps[i].read()[1].shape[:2][::-1], None, None)[3:5]
-                           for i in range(len(caps))])):
+for mtx, dist, rvecs, tvecs in calibrations:
     R, _ = cv2.Rodrigues(rvecs[0])
     t = tvecs[0]
     P = mtx @ np.hstack((R, t))
