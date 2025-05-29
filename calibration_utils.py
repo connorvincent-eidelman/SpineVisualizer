@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from itertools import combinations
 from config import CHECKERBOARD, CALIBRATION_SAMPLES, SQUARE_SIZE_CM
 
 def capture_frames(caps):
@@ -24,8 +25,10 @@ def find_chessboard_corners(caps):
             ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
             if ret:
                 found[i] = True
-                corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1),
-                    (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+                corners2 = cv2.cornerSubPix(
+                    gray, corners, (11, 11), (-1, -1),
+                    (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+                )
                 corners_per_cam[i] = corners2
 
         if all(found):
@@ -37,24 +40,29 @@ def find_chessboard_corners(caps):
         else:
             print("Checkerboard not visible on all cameras.")
 
-        # Display
+        # Display corners
         for i, frame in enumerate(frames):
             disp = frame.copy()
             if found[i] and corners_per_cam[i] is not None:
                 disp = cv2.drawChessboardCorners(disp, CHECKERBOARD, corners_per_cam[i], True)
             cv2.imshow(f"Camera {i}", cv2.resize(disp, (640, 480)))
-        if cv2.waitKey(500) & 0xFF == 27:  # Esc
+        if cv2.waitKey(500) & 0xFF == 27:
             break
 
     return objpoints, imgpoints
+
+def compute_reprojection_error(objpoints, imgpoints, rvecs, tvecs, mtx, dist):
+    total_error = 0
+    for i in range(len(objpoints)):
+        imgpoints2, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], mtx, dist)
+        total_error += cv2.norm(imgpoints[i], imgpoints2, cv2.NORM_L2) / len(imgpoints2)
+    return total_error / len(objpoints)
 
 def calibrate_individual_cameras(objpoints, imgpoints, caps):
     calibrations = []
     for i in range(len(caps)):
         ret, frame = caps[i].read()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # Repeat objpoints to match length of imgpoints[i]
         objp_cam = objpoints[:len(imgpoints[i])]
 
         ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
@@ -62,13 +70,42 @@ def calibrate_individual_cameras(objpoints, imgpoints, caps):
 
         error = compute_reprojection_error(objp_cam, imgpoints[i], rvecs, tvecs, mtx, dist)
         print(f"Camera {i} calibrated. Reprojection error: {error:.4f}")
-        calibrations.append((mtx, dist, rvecs, tvecs))
+        calibrations.append((mtx, dist))
     return calibrations
 
+def stereo_calibrate_all(objpoints, imgpoints, intrinsics, image_shape):
+    extrinsics = {}
 
-def compute_reprojection_error(objpoints, imgpoints, rvecs, tvecs, mtx, dist):
-    total_error = 0
-    for i in range(len(objpoints)):
-        imgpoints2, _ = cv2.projectPoints(objpoints[i], rvecs[i], tvecs[i], mtx, dist)
-        total_error += cv2.norm(imgpoints[i], imgpoints2, cv2.NORM_L2) / len(imgpoints2)
-    return total_error
+    for i, j in combinations(range(len(intrinsics)), 2):
+        mtx1, dist1 = intrinsics[i]
+        mtx2, dist2 = intrinsics[j]
+
+        retval, _, _, _, _, R, T, _, _ = cv2.stereoCalibrate(
+            objpoints, imgpoints[i], imgpoints[j],
+            mtx1, dist1, mtx2, dist2, image_shape,
+            flags=cv2.CALIB_FIX_INTRINSIC
+        )
+
+        # Transform to reference (camera 0)
+        extrinsics[(i, j)] = (R, T)
+
+    return extrinsics
+
+def build_projection_matrices(intrinsics, extrinsics, reference_cam=0):
+    proj_mats = []
+    proj_mats.append(intrinsics[reference_cam][0] @ np.hstack((np.eye(3), np.zeros((3, 1)))))
+
+    for i in range(1, len(intrinsics)):
+        if (reference_cam, i) in extrinsics:
+            R, T = extrinsics[(reference_cam, i)]
+        elif (i, reference_cam) in extrinsics:
+            R_raw, T_raw = extrinsics[(i, reference_cam)]
+            R = R_raw.T
+            T = -R @ T_raw
+        else:
+            raise ValueError(f"No extrinsic calibration between camera {reference_cam} and camera {i}")
+
+        P = intrinsics[i][0] @ np.hstack((R, T))
+        proj_mats.append(P)
+
+    return proj_mats
