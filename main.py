@@ -33,6 +33,13 @@ proj_mats = build_projection_matrices(intrinsics, extrinsics, reference_cam=0)
 # Smoothing
 smoother = LandmarkSmoother(alpha=0.3)
 
+frame_shapes = {}
+for i, cap in enumerate(caps):
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_shapes[i] = (width, height)
+    print(f"Camera {i} resolution: {width}x{height}")
+
 # Function to stack frames in a grid
 def stack_frames_grid(frames, grid_shape):
     rows = []
@@ -64,9 +71,16 @@ while True:
         for lid, pt3d in triangulated_raw.items():
             triangulated[lid] = smoother.smooth(lid, pt3d)
 
+        # Fit spine curve and compute deviation
+        spine_pts = get_spine_points(triangulated)
+        curve = fit_spine_curve(spine_pts) if spine_pts else None
+        lateral_dev = compute_lateral_deviation(curve) if curve is not None else None
+        if lateral_dev is not None:
+            print(f"Lateral Deviation: {lateral_dev:.2f} cm")
+
         for i, frame in enumerate(frames):
-            h, w = frame.shape[:2]
             proj_mat = proj_mats[i]
+            h, w = frame.shape[:2]
 
             def project_point(point3d):
                 pt = np.append(point3d / 100.0, 1)  # cm to meters
@@ -81,39 +95,31 @@ while True:
                 cv2.putText(frame, label, (mid_x, mid_y),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-            if triangulated:
-                # Shoulder distance
-                if 11 in triangulated and 12 in triangulated:
-                    p11 = project_point(triangulated[11])
-                    p12 = project_point(triangulated[12])
-                    dist = compute_distance(triangulated[11], triangulated[12])
-                    draw_line(p11, p12, f"{dist:.1f} cm")
-                    cv2.circle(frame, p11, 5, (0, 255, 0), -1)
-                    cv2.circle(frame, p12, 5, (0, 255, 0), -1)
+            # Draw projected landmarks
+            for lid, pt3d in triangulated.items():
+                pt2d = project_point(pt3d)
+                cv2.circle(frame, pt2d, 4, (255, 255, 0), -1)
 
-                # Spine angle
-                if 23 in triangulated and 24 in triangulated and 0 in triangulated:
-                    p23 = project_point(triangulated[23])
-                    p24 = project_point(triangulated[24])
-                    p0 = project_point(triangulated[0])
-                    angle = compute_angle(triangulated[23], triangulated[24], triangulated[0])
-                    draw_line(p23, p24, f"{angle:.1f}°", color=(255, 0, 0))
-                    cv2.circle(frame, p23, 5, (255, 0, 0), -1)
-                    cv2.circle(frame, p24, 5, (255, 0, 0), -1)
-                    cv2.circle(frame, p0, 5, (255, 0, 0), -1)
+            # Shoulder distance
+            if 11 in triangulated and 12 in triangulated:
+                p11 = project_point(triangulated[11])
+                p12 = project_point(triangulated[12])
+                dist = compute_distance(triangulated[11], triangulated[12])
+                draw_line(p11, p12, f"{dist:.1f} cm", color=(0, 255, 0))
 
-                # Curve + Lateral Deviation
-                spine_pts = get_spine_points(triangulated)
-                if spine_pts is not None:
-                    curve = fit_spine_curve(spine_pts)
-                    if curve is not None:
-                        dev = compute_lateral_deviation(curve)
-                        print(f"Lateral Deviation: {dev:.2f} cm")
-                        for i, frame in enumerate(frames):
-                            proj_mat = proj_mats[i]
-                            curve_2d = project_curve_to_image(curve, proj_mat)
-                            for j in range(len(curve_2d) - 1):
-                                cv2.line(frame, curve_2d[j], curve_2d[j + 1], (0, 0, 255), 2)
+            # Spine angle
+            if 23 in triangulated and 24 in triangulated and 0 in triangulated:
+                p23 = project_point(triangulated[23])
+                p24 = project_point(triangulated[24])
+                p0 = project_point(triangulated[0])
+                angle = compute_angle(triangulated[23], triangulated[24], triangulated[0])
+                draw_line(p23, p24, f"{angle:.1f}°", color=(255, 0, 0))
+
+            # Draw spine curve on body
+            if curve is not None:
+                curve_2d = project_curve_to_image(curve, proj_mat)
+                for j in range(len(curve_2d) - 1):
+                    cv2.line(frame, curve_2d[j], curve_2d[j + 1], (0, 0, 255), 2)
 
     # Combine all views into one window
     resized_frames = [cv2.resize(f, (640, 480)) for f in frames]

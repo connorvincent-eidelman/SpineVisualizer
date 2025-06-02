@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 
-def triangulate_landmarks(landmarks_per_cam, proj_mats, landmark_ids):
+def triangulate_landmarks(landmarks_per_cam, proj_mats, landmark_ids, frame_shapes):
     triangulated = {}
 
     for landmark_id in landmark_ids:
@@ -11,9 +11,11 @@ def triangulate_landmarks(landmarks_per_cam, proj_mats, landmark_ids):
         for cam_idx, landmarks in landmarks_per_cam.items():
             if landmark_id < len(landmarks):
                 lm = landmarks[landmark_id]
-                if lm.visibility > 0.5:  # Optional: Only triangulate if confident
-                    x, y = lm.x, lm.y
-                    points_2d.append([x, y])
+                if lm.visibility > 0.5:
+                    width, height = frame_shapes[cam_idx]
+                    x_px = int(lm.x * width)
+                    y_px = int(lm.y * height)
+                    points_2d.append([x_px, y_px])
                     proj_used.append(proj_mats[cam_idx])
 
         if len(points_2d) >= 2:
@@ -21,6 +23,8 @@ def triangulate_landmarks(landmarks_per_cam, proj_mats, landmark_ids):
             triangulated[landmark_id] = point_3d
 
     return triangulated
+
+
 
 def dlt_triangulation(pts, proj_mats):
     A = []
