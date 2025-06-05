@@ -42,9 +42,12 @@ for i, cap in enumerate(caps):
 
 # Function to stack frames in a grid
 def stack_frames_grid(frames, grid_shape):
+    target_height = max(f.shape[0] for f in frames)
+    target_width = max(f.shape[1] for f in frames)
+    resized = [cv2.resize(f, (target_width, target_height)) for f in frames]
     rows = []
-    for i in range(0, len(frames), grid_shape[1]):
-        row = cv2.hconcat(frames[i:i + grid_shape[1]])
+    for i in range(0, len(resized), grid_shape[1]):
+        row = cv2.hconcat(resized[i:i + grid_shape[1]])
         rows.append(row)
     return cv2.vconcat(rows)
 
@@ -54,6 +57,8 @@ while True:
     landmarks_per_cam = {}
 
     for i, frame in enumerate(frames):
+        mtx, dist = intrinsics[i]
+        frame = cv2.undistort(frame, mtx, dist)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(rgb)
         if results.pose_landmarks:
@@ -64,7 +69,7 @@ while True:
         triangulated_raw = triangulate_landmarks(
             landmarks_per_cam,
             proj_mats,
-            [lm.value for lm in SPINE_LANDMARKS]
+            [lm.value for lm in SPINE_LANDMARKS], frame_shapes
         )
 
         # Apply smoothing
@@ -122,8 +127,8 @@ while True:
                     cv2.line(frame, curve_2d[j], curve_2d[j + 1], (0, 0, 255), 2)
 
     # Combine all views into one window
-    resized_frames = [cv2.resize(f, (640, 480)) for f in frames]
-    combined = stack_frames_grid(resized_frames, grid_shape=(1, len(resized_frames)))
+    
+    combined = stack_frames_grid(frames, grid_shape=(1, len(frames)))
     cv2.imshow("Multi-Cam View", combined)
 
     if cv2.waitKey(1) & 0xFF == 27:

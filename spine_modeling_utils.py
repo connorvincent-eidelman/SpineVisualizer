@@ -35,7 +35,8 @@ def fit_spine_curve(points):
         x_fine, y_fine, z_fine = splev(u_fine, tck)
         curve_points = np.vstack((x_fine, y_fine, z_fine)).T
         return curve_points
-    except Exception:
+    except Exception as e:
+        print(f"[Spline Fit Error]: {e}")
         return None
 
 def compute_lateral_deviation(curve_points):

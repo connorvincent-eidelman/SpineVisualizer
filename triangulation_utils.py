@@ -11,7 +11,7 @@ def triangulate_landmarks(landmarks_per_cam, proj_mats, landmark_ids, frame_shap
         for cam_idx, landmarks in landmarks_per_cam.items():
             if landmark_id < len(landmarks):
                 lm = landmarks[landmark_id]
-                if lm.visibility > 0.5:
+                if lm.visibility > 0.5 and 0 <= lm.x <= 1 and 0 <= lm.y <= 1:
                     width, height = frame_shapes[cam_idx]
                     x_px = int(lm.x * width)
                     y_px = int(lm.y * height)

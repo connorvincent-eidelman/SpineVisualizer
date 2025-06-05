@@ -49,6 +49,7 @@ def find_chessboard_corners(caps):
         if cv2.waitKey(500) & 0xFF == 27:
             break
 
+    cv2.destroyAllWindows()
     return objpoints, imgpoints
 
 def compute_reprojection_error(objpoints, imgpoints, rvecs, tvecs, mtx, dist):
@@ -85,6 +86,7 @@ def stereo_calibrate_all(objpoints, imgpoints, intrinsics, image_shape):
             mtx1, dist1, mtx2, dist2, image_shape,
             flags=cv2.CALIB_FIX_INTRINSIC
         )
+        print(f"Stereo calibration between camera {i} and {j} RMS error: {retval:.4f}")
 
         # Transform to reference (camera 0)
         extrinsics[(i, j)] = (R, T)
