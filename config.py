@@ -4,8 +4,8 @@ SQUARE_SIZE_CM = 2.5  # real-world size of checker square (in cm)
 
 CAMERA_IDS = [
     0, 
-    "http://192.168.1.127:4747/video", 
-    "http://192.168.1.111:4747/video"
+    "http://192.168.1.174:4747/video", 
+    "http://192.168.1.143:4747/video"
 ]
 
 # Selected landmarks for spine posture modeling
