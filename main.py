@@ -134,12 +134,29 @@ while True:
                 dist = compute_distance(triangulated[11], triangulated[12])
                 draw_line(p11, p12, f"{dist:.1f} cm", color=(0, 255, 0))
 
+            # Spine angle visualization (filled triangle)
             if 23 in triangulated and 24 in triangulated and 0 in triangulated:
+  
                 p23 = project_point(triangulated[23])
                 p24 = project_point(triangulated[24])
                 p0 = project_point(triangulated[0])
+    
+ 
+                spine_base = ((p23[0] + p24[0]) // 2, (p23[1] + p24[1]) // 2)
+    
+   
                 angle = compute_angle(triangulated[23], triangulated[24], triangulated[0])
-                draw_line(p23, p24, f"{angle:.1f}°", color=(255, 0, 0))
+
+    
+                triangle_pts = np.array([spine_base, p0, p24], dtype=np.int32)  # or p23 for other side
+                cv2.fillPoly(frame, [triangle_pts], color=(255, 200, 200))  # soft pink fill
+    
+   
+                label_x = (spine_base[0] + p0[0]) // 2
+                label_y = (spine_base[1] + p0[1]) // 2 - 15
+                cv2.putText(frame, f"{angle:.1f}°", (label_x, label_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (50, 0, 200), 3)
+
 
             if curve is not None:
                 curve_2d = project_curve_to_image(curve, proj_mat)
