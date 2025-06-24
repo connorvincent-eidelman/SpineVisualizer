@@ -63,3 +63,46 @@ def project_curve_to_image(curve_3d, proj_mat):
         proj /= proj[2]
         pts_2d.append((int(proj[0]), int(proj[1])))
     return pts_2d
+
+def compute_lateral_offsets(curve_points):
+    """
+    Returns list of lateral deviation distances and corresponding perpendicular 3D projection points.
+    """
+    if len(curve_points) < 2:
+        return [], []
+
+    start, end = curve_points[0], curve_points[-1]
+    vec = end - start
+    vec = vec / np.linalg.norm(vec)
+
+    deviations = []
+    projections = []
+
+    for pt in curve_points[1:-1]:
+        proj_len = np.dot(pt - start, vec)
+        proj_point = start + proj_len * vec
+        deviation = np.linalg.norm(pt - proj_point)
+        deviations.append(deviation)
+        projections.append(proj_point)
+
+    return deviations, projections
+
+class LandmarkSmoother:
+    def __init__(self, alpha=0.3):
+        self.alpha = alpha
+        self.positions = {}
+        self.confidences = {}  # NEW
+
+    def smooth(self, lid, pt):
+        if lid not in self.positions:
+            self.positions[lid] = pt
+        else:
+            self.positions[lid] = self.alpha * np.array(pt) + (1 - self.alpha) * self.positions[lid]
+        return self.positions[lid]
+
+    def smooth_confidence(self, lid, conf):
+        if lid not in self.confidences:
+            self.confidences[lid] = conf
+        else:
+            self.confidences[lid] = self.alpha * conf + (1 - self.alpha) * self.confidences[lid]
+        return self.confidences[lid]

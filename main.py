@@ -1,7 +1,7 @@
-# === File: main.py ===
 import cv2
 import mediapipe as mp
 import numpy as np
+import time
 
 from config import CAMERA_IDS, SPINE_LANDMARKS
 from calibration_utils import (
@@ -13,7 +13,7 @@ from calibration_utils import (
 )
 from triangulation_utils import triangulate_landmarks
 from metrics_utils import compute_distance, compute_angle
-from spine_modeling_utils import LandmarkSmoother, get_spine_points, fit_spine_curve, compute_lateral_deviation, project_curve_to_image
+from spine_modeling_utils import LandmarkSmoother, get_spine_points, fit_spine_curve, compute_lateral_deviation, project_curve_to_image, compute_lateral_offsets
 
 # Initialize video capture
 caps = [cv2.VideoCapture(cid) for cid in CAMERA_IDS]
@@ -40,6 +40,9 @@ for i, cap in enumerate(caps):
     frame_shapes[i] = (width, height)
     print(f"Camera {i} resolution: {width}x{height}")
 
+# Heatmap initialization
+heatmaps = [np.zeros((h, w), dtype=np.float32) for i, (w, h) in frame_shapes.items()]
+
 # Function to stack frames in a grid
 def stack_frames_grid(frames, grid_shape):
     target_height = max(f.shape[0] for f in frames)
@@ -60,9 +63,7 @@ def draw_metrics_overlay(img, metrics, line_height=50, margin=20):
 
     for i, text in enumerate(metrics):
         y = margin + i * line_height
-        # Shadow
         cv2.putText(img, text, (margin, y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-        # Main text
         cv2.putText(img, text, (margin, y), font, font_scale, color, thickness, cv2.LINE_AA)
 
 # Main loop
@@ -79,10 +80,11 @@ while True:
             landmarks_per_cam[i] = results.pose_landmarks.landmark
 
     triangulated = {}
+    confidences_raw = {}
     metrics = ["Lateral Deviation: --", "Shoulder Distance: --", "Spine Angle: --"]
 
     if len(landmarks_per_cam) >= 2:
-        triangulated_raw = triangulate_landmarks(
+        triangulated_raw, confidences_raw = triangulate_landmarks(
             landmarks_per_cam,
             proj_mats,
             [lm.value for lm in SPINE_LANDMARKS],
@@ -104,8 +106,14 @@ while True:
             metrics[1] = f"Shoulder Distance: {dist:.1f} cm"
 
         if 23 in triangulated and 24 in triangulated and 0 in triangulated:
-            angle = compute_angle(triangulated[23], triangulated[24], triangulated[0])
-            metrics[2] = f"Spine Angle: {angle:.1f}°"
+            hip_mid = (np.array(triangulated[23]) + np.array(triangulated[24])) / 2
+            nose = np.array(triangulated[0])
+            spine_vec = nose - hip_mid
+            spine_vec /= np.linalg.norm(spine_vec)
+            vertical = np.array([0, 1, 0])
+            angle_rad = np.arccos(np.clip(np.dot(spine_vec, vertical), -1.0, 1.0))
+            angle_deg = np.degrees(angle_rad)
+            metrics[2] = f"Spine Angle: {angle_deg:.1f}°"
 
         for i, frame in enumerate(frames):
             proj_mat = proj_mats[i]
@@ -125,8 +133,19 @@ while True:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
             for lid, pt3d in triangulated.items():
+                conf = confidences_raw.get(lid, 0.0)
                 pt2d = project_point(pt3d)
-                cv2.circle(frame, pt2d, 4, (255, 255, 0), -1)
+
+                if 0 <= pt2d[0] < w and 0 <= pt2d[1] < h:
+                    heatmaps[i][pt2d[1], pt2d[0]] += conf
+
+                radius = int(4 + 8 * conf)
+                color = (
+                    int(255 * (1 - conf)),
+                    int(255 * conf),
+                    0
+                )
+                cv2.circle(frame, pt2d, radius, color, -1)
 
             if 11 in triangulated and 12 in triangulated:
                 p11 = project_point(triangulated[11])
@@ -134,34 +153,43 @@ while True:
                 dist = compute_distance(triangulated[11], triangulated[12])
                 draw_line(p11, p12, f"{dist:.1f} cm", color=(0, 255, 0))
 
-            # Spine angle visualization (filled triangle)
             if 23 in triangulated and 24 in triangulated and 0 in triangulated:
-  
-                p23 = project_point(triangulated[23])
-                p24 = project_point(triangulated[24])
-                p0 = project_point(triangulated[0])
-    
- 
-                spine_base = ((p23[0] + p24[0]) // 2, (p23[1] + p24[1]) // 2)
-    
-   
-                angle = compute_angle(triangulated[23], triangulated[24], triangulated[0])
+                hip_mid = (np.array(triangulated[23]) + np.array(triangulated[24])) / 2
+                nose = np.array(triangulated[0])
+                p_hip = project_point(hip_mid)
+                p_nose = project_point(nose)
 
-    
-                triangle_pts = np.array([spine_base, p0, p24], dtype=np.int32)  # or p23 for other side
-                cv2.fillPoly(frame, [triangle_pts], color=(255, 200, 200))  # soft pink fill
-    
-   
-                label_x = (spine_base[0] + p0[0]) // 2
-                label_y = (spine_base[1] + p0[1]) // 2 - 15
-                cv2.putText(frame, f"{angle:.1f}°", (label_x, label_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (50, 0, 200), 3)
+                vec_y_screen = np.array([0, -100])
+                vertical_end = (p_hip[0] + vec_y_screen[0], p_hip[1] + vec_y_screen[1])
+                cv2.line(frame, p_hip, vertical_end, (255, 255, 0), 2)
 
+                cv2.line(frame, p_hip, p_nose, (255, 200, 200), 4)
+                label_x = (p_hip[0] + p_nose[0]) // 2
+                label_y = (p_hip[1] + p_nose[1]) // 2 - 10
+                cv2.putText(frame, f"{angle_deg:.1f}°", (label_x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (50, 0, 200), 3)
 
             if curve is not None:
                 curve_2d = project_curve_to_image(curve, proj_mat)
-                for j in range(len(curve_2d) - 1):
-                    cv2.line(frame, curve_2d[j], curve_2d[j + 1], (0, 0, 255), 2)
+                lateral_offsets = compute_lateral_offsets(curve)
+                for j in range(1, len(curve_2d) - 1):
+                    pt = curve[j]
+                    base_pt = curve[0]
+                    vec = curve[-1] - base_pt
+                    vec = vec / np.linalg.norm(vec)
+                    proj_len = np.dot(pt - base_pt, vec)
+                    proj_point = base_pt + proj_len * vec
+                    offset = pt - proj_point
+                    color = (100, 100, 255)
+                    start = project_point(proj_point)
+                    end = project_point(pt)
+                    cv2.line(frame, start, end, color, 2)
+
+    for i in range(len(frames)):
+        normalized = cv2.normalize(heatmaps[i], None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        colored = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(frames[i], 0.8, colored, 0.4, 0)
+        frames[i] = overlay
 
     combined = stack_frames_grid(frames, grid_shape=(1, len(frames)))
     draw_metrics_overlay(combined, metrics)
@@ -170,7 +198,6 @@ while True:
     if cv2.waitKey(1) & 0xFF == 27:
         break
 
-# Cleanup
 for cap in caps:
     cap.release()
 cv2.destroyAllWindows()
