@@ -54,6 +54,7 @@ def stack_frames_grid(frames, grid_shape):
         rows.append(row)
     return cv2.vconcat(rows)
 
+
 # Function to overlay large metric text
 def draw_metrics_overlay(img, metrics, line_height=50, margin=20):
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -69,11 +70,18 @@ def draw_metrics_overlay(img, metrics, line_height=50, margin=20):
 # Main loop
 while True:
     frames = capture_frames(caps)
+
+    if any(f is None for f in frames):
+        print("⚠️ Warning: One or more camera frames could not be read.")
+        continue
+
     landmarks_per_cam = {}
 
     for i, frame in enumerate(frames):
+        if frame is None:
+            continue
         mtx, dist = intrinsics[i]
-        frame = cv2.undistort(frame, mtx, dist)
+        frame = cv2.undistort(frame.copy(), mtx, dist)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(rgb)
         if results.pose_landmarks:
@@ -84,7 +92,7 @@ while True:
     metrics = ["Lateral Deviation: --", "Shoulder Distance: --", "Spine Angle: --"]
 
     if len(landmarks_per_cam) >= 2:
-        triangulated_raw, confidences_raw = triangulate_landmarks(
+        triangulated_raw, raw_confidences = triangulate_landmarks(
             landmarks_per_cam,
             proj_mats,
             [lm.value for lm in SPINE_LANDMARKS],
@@ -93,6 +101,7 @@ while True:
 
         for lid, pt3d in triangulated_raw.items():
             triangulated[lid] = smoother.smooth(lid, pt3d)
+            confidences_raw[lid] = smoother.smooth_confidence(lid, raw_confidences.get(lid, 0.0))
 
         spine_pts = get_spine_points(triangulated)
         curve = fit_spine_curve(spine_pts) if spine_pts else None
@@ -190,6 +199,11 @@ while True:
         colored = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
         overlay = cv2.addWeighted(frames[i], 0.8, colored, 0.4, 0)
         frames[i] = overlay
+    if confidences_raw:
+        avg_conf = sum(confidences_raw.values()) / len(confidences_raw)
+        metrics.append(f"Avg Confidence: {avg_conf:.2f}")
+    else:
+        metrics.append("Avg Confidence: --")
 
     combined = stack_frames_grid(frames, grid_shape=(1, len(frames)))
     draw_metrics_overlay(combined, metrics)
