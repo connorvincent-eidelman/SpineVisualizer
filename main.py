@@ -155,6 +155,11 @@ while True:
                     0
                 )
                 cv2.circle(frame, pt2d, radius, color, -1)
+                
+                cv2.putText(
+                    frame, f"{conf:.2f}", (pt2d[0] + 6, pt2d[1] - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+                )   
 
             if 11 in triangulated and 12 in triangulated:
                 p11 = project_point(triangulated[11])

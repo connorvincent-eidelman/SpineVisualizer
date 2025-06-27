@@ -2,9 +2,29 @@ import cv2
 import numpy as np
 from itertools import combinations
 from config import CHECKERBOARD, CALIBRATION_SAMPLES, SQUARE_SIZE_CM
+import time
 
 def capture_frames(caps):
     return [cap.read()[1] for cap in caps]
+
+def wait_with_timer(caps, seconds=5):
+    start_time = time.time()
+    while time.time() - start_time < seconds:
+        frames = [cap.read()[1] for cap in caps]
+        remaining = int(seconds - (time.time() - start_time)) + 1
+
+        for i, frame in enumerate(frames):
+            if frame is not None:
+                cv2.putText(frame, f"Next capture in {remaining}s", (30, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+                cv2.imshow(f"Camera {i}", cv2.resize(frame, (640, 480)))
+
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+def flush_camera_buffers(caps, flush_count=5):
+    for _ in range(flush_count):
+        for cap in caps:
+            cap.read()
 
 def find_chessboard_corners(caps):
     objp = np.zeros((CHECKERBOARD[0]*CHECKERBOARD[1], 3), np.float32)
@@ -37,6 +57,8 @@ def find_chessboard_corners(caps):
                 imgpoints[i].append(corners_per_cam[i])
             samples += 1
             print(f"Captured sample {samples}/{CALIBRATION_SAMPLES}")
+            wait_with_timer(caps, seconds=10.0)
+            flush_camera_buffers(caps)
         else:
             print("Checkerboard not visible on all cameras.")
 
