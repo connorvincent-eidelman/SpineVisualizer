@@ -27,7 +27,7 @@ print("Starting calibration...")
 objpoints, imgpoints = find_chessboard_corners(caps)
 intrinsics = calibrate_individual_cameras(objpoints, imgpoints, caps)
 gray_shape = cv2.cvtColor(caps[0].read()[1], cv2.COLOR_BGR2GRAY).shape[::-1]
-extrinsics = stereo_calibrate_all(objpoints, imgpoints, intrinsics, gray_shape)
+extrinsics = stereo_calibrate_all(objpoints, imgpoints, intrinsics, gray_shape, caps)
 proj_mats = build_projection_matrices(intrinsics, extrinsics, reference_cam=0)
 
 # Smoothing
