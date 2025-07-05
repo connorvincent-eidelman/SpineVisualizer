@@ -12,7 +12,7 @@ from calibration_utils import (
     capture_frames
 )
 from triangulation_utils import triangulate_landmarks
-from metrics_utils import compute_distance, compute_angle
+from metrics_utils import compute_distance, compute_angle, compute_advanced_metrics
 from spine_modeling_utils import LandmarkSmoother, get_spine_points, fit_spine_curve, compute_lateral_deviation, project_curve_to_image, compute_lateral_offsets
 
 # Initialize video capture
@@ -123,6 +123,16 @@ while True:
             angle_rad = np.arccos(np.clip(np.dot(spine_vec, vertical), -1.0, 1.0))
             angle_deg = np.degrees(angle_rad)
             metrics[2] = f"Spine Angle: {angle_deg:.1f}°"
+        
+        adv_metrics = compute_advanced_metrics(triangulated, curve)
+        for key, value in adv_metrics.items():
+            if isinstance(value, float):
+                if "Offset" in key:
+                    metrics.append(f"{key}: {value:.1f} cm")
+                elif "Ratio" in key:
+                    metrics.append(f"{key}: {value:.2f}")
+                else:
+                    metrics.append(f"{key}: {value:.1f}°")
 
         for i, frame in enumerate(frames):
             proj_mat = proj_mats[i]

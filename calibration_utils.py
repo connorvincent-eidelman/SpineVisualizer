@@ -4,6 +4,10 @@ from itertools import combinations
 from config import CHECKERBOARD, CALIBRATION_SAMPLES, SQUARE_SIZE_CM
 import time
 import random
+import os
+
+SAVE_DIR = "calibration_samples"
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 def draw_epipolar_lines(img1, img2, pts1, pts2, F):
     """Draw epipolar lines on img1 and img2 given matched points and fundamental matrix"""
@@ -82,6 +86,9 @@ def find_chessboard_corners(caps):
             objpoints.append(objp)
             for i in range(len(caps)):
                 imgpoints[i].append(corners_per_cam[i])
+                
+                filename = os.path.join(SAVE_DIR, f"sample_{samples:02d}_cam_{i}.png")
+                cv2.imwrite(filename, frames[i])
             samples += 1
             print(f"Captured sample {samples}/{CALIBRATION_SAMPLES}")
             wait_with_timer(caps, seconds=10.0)
@@ -156,7 +163,13 @@ def stereo_calibrate_all(objpoints, imgpoints, intrinsics, image_shape, caps):
         undist1 = cv2.undistort(gray1, mtx1, dist1)
         undist2 = cv2.undistort(gray2, mtx2, dist2)
 
-        img1_lines, img2_lines = draw_epipolar_lines(undist1, undist2, img1_pts, img2_pts, F)
+        img1_pts_flat = img1_pts.reshape(-1, 2)
+        img2_pts_flat = img2_pts.reshape(-1, 2)
+
+# Compute Fundamental Matrix
+        F, mask = cv2.findFundamentalMat(img1_pts_flat, img2_pts_flat, cv2.FM_RANSAC)
+
+        img1_lines, img2_lines = draw_epipolar_lines(undist1, undist2, img1_pts_flat, img2_pts_flat, F)
 
         cv2.imshow(f"Epipolar Lines - Camera {i}", img1_lines)
         cv2.imshow(f"Epipolar Lines - Camera {j}", img2_lines)
