@@ -12,7 +12,8 @@ from calibration_utils import (
     capture_frames
 )
 from triangulation_utils import triangulate_landmarks
-from metrics_utils import compute_distance, compute_angle, compute_advanced_metrics
+from metrics_utils import compute_distance, compute_angle
+from advanced_metrics import compute_advanced_metrics
 from spine_modeling_utils import LandmarkSmoother, get_spine_points, fit_spine_curve, compute_lateral_deviation, project_curve_to_image, compute_lateral_offsets
 
 # Initialize video capture
