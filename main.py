@@ -217,18 +217,22 @@ while True:
                     start = project_point(proj_point)
                     end = project_point(pt)
                     cv2.line(frame, start, end, color, 2)
-                frame_data = {
-                "timestamp": time.time(),
-                "curve": [pt.tolist() for pt in curve],
-                "metrics": {
+                metrics_dict = {
                     "lateral_deviation": float(lateral_dev) if lateral_dev is not None else None,
                     "shoulder_distance": float(dist) if 11 in triangulated and 12 in triangulated else None,
                     "spine_angle": float(angle_deg) if 0 in triangulated and 23 in triangulated and 24 in triangulated else None
-                    **{k: float(v) if isinstance(v, (float, int)) else v for k, v in adv_metrics.items()}
-                },
-                "confidences": {str(k): float(v) for k, v in confidences_raw.items()}
-            }
-            session_data.append(frame_data)
+                }   
+
+                metrics_dict.update({k: float(v) if isinstance(v, (float, int)) else v for k, v in adv_metrics.items()})
+
+
+                frame_data = {
+                    "timestamp": time.time(),
+                    "curve": [pt.tolist() for pt in curve],
+                    "metrics": metrics_dict,
+                    "confidences": {str(k): float(v) for k, v in confidences_raw.items()}
+                }
+                session_data.append(frame_data)
 
     for i in range(len(frames)):
         normalized = cv2.normalize(heatmaps[i], None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)

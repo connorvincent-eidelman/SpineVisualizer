@@ -1,8 +1,6 @@
-import json
+import open3d as o3d
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
+import json
 
 
 def load_session(path):
@@ -92,8 +90,6 @@ def apply_curvature_ratio(curve, target_ratio):
     factor = target_ratio / current_ratio if current_ratio > 0 else 1.0
 
     base = curve[0]
-    direction = curve[-1] - curve[0]
-    direction /= np.linalg.norm(direction)
     new_curve = [base]
 
     for i in range(1, len(curve)):
@@ -103,17 +99,27 @@ def apply_curvature_ratio(curve, target_ratio):
 
     return np.array(new_curve)
 
-def visualize_curve(curve):
-    xs, ys, zs = curve[:, 0], curve[:, 1], curve[:, 2]
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot(xs, ys, zs, 'o-', label='Estimated Spine')
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Y (cm)")
-    ax.set_zlabel("Z (cm)")
-    ax.set_title("Average Estimated Spine Curve")
-    ax.legend()
-    plt.show()
+def visualize_curve_open3d(curve):
+    # Convert curve into Open3D LineSet
+    points = o3d.utility.Vector3dVector(curve)
+    lines = [[i, i+1] for i in range(len(curve) - 1)]
+    colors = [[0.2, 0.8, 0.3] for _ in lines]  # greenish lines
+    line_set = o3d.geometry.LineSet(points=points, lines=o3d.utility.Vector2iVector(lines))
+    line_set.colors = o3d.utility.Vector3dVector(colors)
+
+    # Add coordinate frame for reference
+    origin_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=10.0)
+
+    # Create small spheres at joints
+    spheres = []
+    for pt in curve:
+        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.8)
+        sphere.translate(pt)
+        sphere.paint_uniform_color([1, 0.4, 0.1])  # orange
+        spheres.append(sphere)
+
+    # Visualize all
+    o3d.visualization.draw_geometries([line_set, origin_frame] + spheres)
 
 def main(json_path):
     data = load_session(json_path)
@@ -137,11 +143,9 @@ def main(json_path):
     transformed = apply_shoulder_tilt(transformed, metrics.get("Shoulder Tilt", 0))
     transformed = apply_curvature_ratio(transformed, metrics.get("Spine Curvature Ratio", 1.0))
 
-    visualize_curve(transformed)
+    visualize_curve_open3d(transformed)
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python visualize_spine_estimate.py path_to_session.json")
-    else:
-        main(sys.argv[1])
+    # Hardcoded path to your session file
+    json_path = "/Users/connorv-e/Desktop/spinevis/spine_session_20250708_122411.json"  # 👈 Replace with your actual file
+    main(json_path)
