@@ -10,7 +10,7 @@ def scale_to_real_height(obj_name, real_height_meters):
     obj.scale = (scale_factor, scale_factor, scale_factor)
 
 # Change these values:
-OBJECT_NAME = "YourMeshName"
+OBJECT_NAME = "baked_mesh"  # Name of your mesh object
 REAL_HEIGHT = 1.8542  # in meters
 
 scale_to_real_height(OBJECT_NAME, REAL_HEIGHT)

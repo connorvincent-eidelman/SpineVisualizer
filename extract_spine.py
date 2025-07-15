@@ -20,5 +20,5 @@ def extract_spine(obj_name, x_threshold=0.05, z_resolution=0.02):
     return sorted_spine
 
 # Save to global variable for use in other scripts
-spine_curve = extract_spine("YourMeshName")
+spine_curve = extract_spine("baked_mesh")
 print(f"Extracted {len(spine_curve)} spine points.")
