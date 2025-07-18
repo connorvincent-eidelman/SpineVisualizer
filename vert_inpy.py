@@ -1,10 +1,24 @@
-import trimesh
+import pyvista as pv
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import trimesh
 
 # === Load Mesh ===
-mesh = trimesh.load("cleaned_scan.obj", process=True)
+tm_mesh = trimesh.load("/Users/connorv-e/Desktop/spinevis/modeling/BODY.obj", process=True)
+verts = tm_mesh.vertices
+faces = tm_mesh.faces
+
+# PyVista requires a "flattened" array: [3, i0, i1, i2, 3, j0, j1, j2, ...]
+faces_pv = np.hstack(
+    [np.insert(face, 0, 3) for face in faces]
+)
+
+# Create the PyVista mesh
+pv_mesh = pv.PolyData(verts, faces_pv)
+
+# Visualize
+plotter = pv.Plotter()
+plotter.add_mesh(pv_mesh, show_edges=True, color="white", opacity=0.6)
+plotter.show()
 
 # === Constants ===
 body_height_cm = 185.42
@@ -17,15 +31,13 @@ vertebrae_labels = (
     [f'L{i+1}' for i in range(5)]
 )
 
-# === Mesh Analysis ===
-verts = mesh.vertices
-top_y = np.max(verts[:, 1])       # Head top
-bottom_y = np.min(verts[:, 1])    # Foot bottom
+# === Estimate Spine Positions ===
+top_y = np.max(verts[:, 1])
+bottom_y = np.min(verts[:, 1])
 mesh_height = top_y - bottom_y
 scale_ratio = body_height_cm / mesh_height
-spine_start_y = top_y - 5.0 * (mesh_height / body_height_cm)  # Estimate C1 5cm below head
+spine_start_y = top_y - 5.0 * (mesh_height / body_height_cm)
 
-# === Vertebrae Placement ===
 vertebrae_y = []
 current_y = spine_start_y
 
@@ -36,31 +48,19 @@ for region, count in vertebrae_counts.items():
         vertebrae_y.append(current_y - i * spacing)
     current_y -= segment_height
 
-# Truncate in case of float rounding
 vertebrae_y = vertebrae_y[:len(vertebrae_labels)]
-
-# === Center Line (XZ) ===
 center_x = np.median(verts[:, 0])
 center_z = np.median(verts[:, 2])
-
 vertebrae_coords = np.array([[center_x, y, center_z] for y in vertebrae_y])
 
-# === Visualization ===
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
+# === Build Scene ===
+plotter = pv.Plotter()
+plotter.add_mesh(pv_mesh, opacity=0.3, color='white', show_edges=False)
 
-# Mesh overlay
-ax.scatter(verts[::10, 0], verts[::10, 1], verts[::10, 2], alpha=0.02, label="Mesh")
-
-# Vertebrae markers
 for i, coord in enumerate(vertebrae_coords):
-    ax.scatter(*coord, color='red', s=20)
-    ax.text(*coord, vertebrae_labels[i], fontsize=8, color='blue')
+    plotter.add_mesh(pv.Sphere(radius=0.01, center=coord), color='red')
+    plotter.add_point_labels([coord], [vertebrae_labels[i]], font_size=10, text_color='blue')
 
-ax.set_title("Vertebrae Marker Estimation")
-ax.set_xlabel("X")
-ax.set_ylabel("Y")
-ax.set_zlabel("Z")
-ax.view_init(elev=160, azim=-90)  # Side view
-
-plt.show()
+plotter.add_axes()
+plotter.show_bounds(grid='front', location='outer')
+plotter.show(title="Vertebrae Marker Overlay", window_size=[1200, 900])
