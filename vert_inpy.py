@@ -72,12 +72,14 @@ c1_point = c1_candidates[c1_index]
 # === Build Vertebrae Spine with Region-Specific Spacing ===
 vertebrae_coords = [c1_point]
 current_y = c1_point[1]
-
 region_sequence = (
     ['C'] * (vertebrae_counts['C'] - 1) +
     ['T'] * vertebrae_counts['T'] +
     ['L'] * vertebrae_counts['L']
 )
+
+max_angle_deg = 25
+max_angle_rad = np.radians(max_angle_deg)
 
 for region in region_sequence:
     y_step_model = region_spacing_cm[region] / scale_ratio
@@ -95,6 +97,28 @@ for region in region_sequence:
 
     z_max_idx = np.argmax(candidates[:, 2])
     spine_point = candidates[z_max_idx]
+
+    # === Apply angle constraint ===
+    prev_point = vertebrae_coords[-1]
+    direction = spine_point - prev_point
+    angle = np.arccos(np.clip(
+        np.dot(direction / np.linalg.norm(direction), [0, 1, 0]), -1.0, 1.0))
+
+    if angle > max_angle_rad:
+        # Rotate direction to meet max angle constraint
+        rotate_ratio = np.tan(max_angle_rad)
+        dz = spine_point[2] - prev_point[2]
+        dx = spine_point[0] - prev_point[0]
+        dy = spine_point[1] - prev_point[1]
+        dz = np.sign(dz) * abs(dy) * rotate_ratio
+        dx = np.clip(dx, x_min, x_max)  # Ensure within x bounds
+        spine_point = prev_point + np.array([dx, dy, dz])
+
+        # Ensure new point stays within constraints
+        if spine_point[2] < z_min:
+            spine_point[2] = z_min
+        spine_point[0] = np.clip(spine_point[0], x_min, x_max)
+
     vertebrae_coords.append(spine_point)
 
 # === Trim to 24 Vertebrae ===
@@ -104,12 +128,23 @@ vertebrae_coords = np.array(vertebrae_coords[:len(vertebrae_labels)])
 plotter = pv.Plotter()
 plotter.add_mesh(pv_mesh, opacity=0.3, color='white', show_edges=False)
 
+colors = {'C': 'blue', 'T': 'green', 'L': 'orange'}
 sphere_radius = 0.005 * mesh_height
+
 for i, coord in enumerate(vertebrae_coords):
-    color = 'blue' if i == 0 else 'red'
+    region = vertebrae_labels[i][0]
+    color = colors.get(region, 'red')
     plotter.add_mesh(pv.Sphere(radius=sphere_radius, center=coord), color=color)
     plotter.add_point_labels([coord], [vertebrae_labels[i]], font_size=15, text_color='blue')
 
+# Add line through vertebrae
+for i in range(len(vertebrae_coords) - 1):
+    p1, p2 = vertebrae_coords[i], vertebrae_coords[i + 1]
+    region = vertebrae_labels[i][0]
+    color = colors.get(region, 'red')
+    line = pv.Line(p1, p2)
+    plotter.add_mesh(line, color=color, line_width=4)
+
 plotter.add_axes()
 plotter.show_bounds(grid='front', location='outer')
-plotter.show(title="Realistic Vertebrae Spacing by Region", window_size=[1200, 900])
+plotter.show(title="Realistic Vertebrae Line with Angle Constraint", window_size=[1200, 900])
