@@ -25,15 +25,8 @@ skull_height_cm = body_height_cm * 0.13
 c1_offset_cm = skull_height_cm / 1.5
 
 # Vertebrae counts per region
-vertebrae_counts = {'C': 7, 'T': 12, 'L': 5}
-vertebrae_labels = (
-    [f'C{i+1}' for i in range(7)] +
-    [f'T{i+1}' for i in range(12)] +
-    [f'L{i+1}' for i in range(5)]
-)
-
-# Average distances between vertebrae (in cm)
-region_spacing_cm = {'C': 1.71, 'T': 2.25, 'L': 3.4}
+vertebrae_counts = {'C': 7, 'T': 12, 'L': 5, 'S': 5, 'Co': 4}
+region_spacing_cm = {'C': 1.71, 'T': 2.25, 'L': 3.4, 'S': 1.5, 'Co': 0.8}
 
 # === Get Vertex Data ===
 verts = pv_mesh.points
@@ -69,19 +62,31 @@ if len(c1_candidates) == 0:
 c1_index = np.argmax(c1_candidates[:, 2])
 c1_point = c1_candidates[c1_index]
 
-# === Build Vertebrae Spine with Region-Specific Spacing ===
+# === Build Vertebrae Spine ===
 vertebrae_coords = [c1_point]
+vertebrae_labels = ['C1']
 current_y = c1_point[1]
+
 region_sequence = (
     ['C'] * (vertebrae_counts['C'] - 1) +
     ['T'] * vertebrae_counts['T'] +
-    ['L'] * vertebrae_counts['L']
+    ['L'] * vertebrae_counts['L'] +
+    ['S'] * vertebrae_counts['S'] +
+    ['Co'] * vertebrae_counts['Co']
+)
+
+label_sequence = (
+    [f'C{i+2}' for i in range(vertebrae_counts['C'] - 1)] +
+    [f'T{i+1}' for i in range(vertebrae_counts['T'])] +
+    [f'L{i+1}' for i in range(vertebrae_counts['L'])] +
+    [f'S{i+1}' for i in range(vertebrae_counts['S'])] +
+    [f'Co{i+1}' for i in range(vertebrae_counts['Co'])]
 )
 
 max_angle_deg = 25
 max_angle_rad = np.radians(max_angle_deg)
 
-for region in region_sequence:
+for region, label in zip(region_sequence, label_sequence):
     y_step_model = region_spacing_cm[region] / scale_ratio
     current_y += y_step_model
 
@@ -92,59 +97,95 @@ for region in region_sequence:
         (normals[:, 2] > normal_z_thresh)
     )
     candidates = verts[mask]
+
     if len(candidates) == 0:
+        # fallback to closest point by y-distance
+        y_diffs = np.abs(verts[:, 1] - current_y)
+        fallback_indices = np.argsort(y_diffs)
+        for idx in fallback_indices:
+            point = verts[idx]
+            if (x_min <= point[0] <= x_max) and (point[2] >= z_min):
+                candidates = [point]
+                print(f"Fallback used for {label}: closest available point selected.")
+                break
+
+    if len(candidates) == 0:
+        print(f"Skipped {label}: no valid candidates or fallback.")
         continue
 
-    z_max_idx = np.argmax(candidates[:, 2])
-    spine_point = candidates[z_max_idx]
+    spine_point = candidates[np.argmax([p[2] for p in candidates])]
 
-    # === Apply angle constraint ===
     prev_point = vertebrae_coords[-1]
     direction = spine_point - prev_point
-    angle = np.arccos(np.clip(
-        np.dot(direction / np.linalg.norm(direction), [0, 1, 0]), -1.0, 1.0))
+    norm = np.linalg.norm(direction)
+    if norm == 0:
+        print(f"Skipped {label}: zero-length direction vector.")
+        continue
+
+    unit_dir = direction / norm
+    angle = np.arccos(np.clip(np.dot(unit_dir, [0, 1, 0]), -1.0, 1.0))
 
     if angle > max_angle_rad:
-        # Rotate direction to meet max angle constraint
         rotate_ratio = np.tan(max_angle_rad)
         dz = spine_point[2] - prev_point[2]
         dx = spine_point[0] - prev_point[0]
         dy = spine_point[1] - prev_point[1]
         dz = np.sign(dz) * abs(dy) * rotate_ratio
-        dx = np.clip(dx, x_min, x_max)  # Ensure within x bounds
+        dx = np.clip(dx, x_min, x_max)
         spine_point = prev_point + np.array([dx, dy, dz])
 
-        # Ensure new point stays within constraints
-        if spine_point[2] < z_min:
-            spine_point[2] = z_min
+        spine_point[2] = max(spine_point[2], z_min)
         spine_point[0] = np.clip(spine_point[0], x_min, x_max)
 
     vertebrae_coords.append(spine_point)
+    vertebrae_labels.append(label)
 
-# === Trim to 24 Vertebrae ===
-vertebrae_coords = np.array(vertebrae_coords[:len(vertebrae_labels)])
+
+print("\n=== Vertebrae Placement Log ===")
+for label, coord in zip(vertebrae_labels, vertebrae_coords):
+    print(f"{label}: x={coord[0]:.4f}, y={coord[1]:.4f}, z={coord[2]:.4f}")
 
 # === Visualization ===
 plotter = pv.Plotter()
 plotter.add_mesh(pv_mesh, opacity=0.3, color='white', show_edges=False)
 
-colors = {'C': 'blue', 'T': 'green', 'L': 'orange'}
-sphere_radius = 0.005 * mesh_height
+colors = {'C': 'blue', 'T': 'green', 'L': 'orange', 'S': 'purple', 'Co': 'gray'}
+region_shapes = {
+    'C': {'radius': 0.007, 'height': 0.005},
+    'T': {'radius': 0.01,  'height': 0.006},
+    'L': {'radius': 0.002, 'height': 0.007},
+    'S': {'radius': 0.004,  'height': 0.004},
+    'Co': {'radius': 0.001, 'height': 0.007}
+}
 
 for i, coord in enumerate(vertebrae_coords):
-    region = vertebrae_labels[i][0]
+    label = vertebrae_labels[i]
+    if label.startswith("Co"):
+        region = "Co"
+    else:
+        region = label[0]
+
     color = colors.get(region, 'red')
-    plotter.add_mesh(pv.Sphere(radius=sphere_radius, center=coord), color=color)
-    plotter.add_point_labels([coord], [vertebrae_labels[i]], font_size=15, text_color='blue')
+    shape = region_shapes.get(region, {'radius': 0.01, 'height': 0.005})
+
+    cylinder = pv.Cylinder(center=coord, direction=(1, 0, 0),
+                           radius=shape['radius'] * mesh_height,
+                           height=shape['height'] * mesh_height)
+    plotter.add_mesh(cylinder, color=color)
+    plotter.add_point_labels([coord], [label], font_size=30, text_color=color)
 
 # Add line through vertebrae
 for i in range(len(vertebrae_coords) - 1):
     p1, p2 = vertebrae_coords[i], vertebrae_coords[i + 1]
-    region = vertebrae_labels[i][0]
+    label = vertebrae_labels[i]
+    if label.startswith("Co"):
+        region = "Co"
+    else:
+        region = label[0]
     color = colors.get(region, 'red')
     line = pv.Line(p1, p2)
     plotter.add_mesh(line, color=color, line_width=4)
 
 plotter.add_axes()
 plotter.show_bounds(grid='front', location='outer')
-plotter.show(title="Realistic Vertebrae Line with Angle Constraint", window_size=[1200, 900])
+plotter.show(title="Full Vertebrae Spine with Angle Constraints", window_size=[1200, 900])
