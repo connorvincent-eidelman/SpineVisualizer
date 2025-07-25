@@ -65,7 +65,9 @@ c1_point = c1_candidates[c1_index]
 # === Build Vertebrae Spine ===
 vertebrae_coords = [c1_point]
 vertebrae_labels = ['C1']
+used_coords = {tuple(np.round(c1_point, 5))}
 current_y = c1_point[1]
+min_distance = 0.002
 
 region_sequence = (
     ['C'] * (vertebrae_counts['C'] - 1) +
@@ -90,28 +92,46 @@ for region, label in zip(region_sequence, label_sequence):
     y_step_model = region_spacing_cm[region] / scale_ratio
     current_y += y_step_model
 
+    if region == 'Co':
+        y_tol = y_tolerance * 3
+        z_thresh = 0.0
+        normal_thresh = 0.05
+    else:
+        y_tol = y_tolerance
+        z_thresh = z_min
+        normal_thresh = normal_z_thresh
+
     mask = (
-        (np.abs(verts[:, 1] - current_y) < y_tolerance) &
+        (np.abs(verts[:, 1] - current_y) < y_tol) &
         (verts[:, 0] >= x_min) & (verts[:, 0] <= x_max) &
-        (verts[:, 2] >= z_min) &
-        (normals[:, 2] > normal_z_thresh)
+        (verts[:, 2] >= z_thresh) &
+        (normals[:, 2] > normal_thresh)
     )
     candidates = verts[mask]
+    candidates = [c for c in candidates if all(np.linalg.norm(c - np.array(p)) >= min_distance for p in used_coords)]
 
     if len(candidates) == 0:
-        # fallback to closest point by y-distance
+        fallback_found = False
         y_diffs = np.abs(verts[:, 1] - current_y)
         fallback_indices = np.argsort(y_diffs)
+
         for idx in fallback_indices:
             point = verts[idx]
-            if (x_min <= point[0] <= x_max) and (point[2] >= z_min):
-                candidates = [point]
-                print(f"Fallback used for {label}: closest available point selected.")
-                break
+            if (x_min <= point[0] <= x_max) and (point[2] >= z_thresh):
+                if all(np.linalg.norm(point - np.array(p)) >= min_distance for p in used_coords):
+                    candidates = [point]
+                    fallback_found = True
+                    print(f"Fallback used for {label}: closest available unique point selected.")
+                    break
 
-    if len(candidates) == 0:
-        print(f"Skipped {label}: no valid candidates or fallback.")
-        continue
+        if not fallback_found:
+            print(f"Warning: fallback failed for {label}, inserting synthetic offset.")
+            last_point = vertebrae_coords[-1]
+            spine_point = last_point + np.array([0.0, y_step_model, -0.001])
+            vertebrae_coords.append(spine_point)
+            vertebrae_labels.append(label)
+            used_coords.add(tuple(np.round(spine_point, 5)))
+            continue
 
     spine_point = candidates[np.argmax([p[2] for p in candidates])]
 
@@ -133,13 +153,12 @@ for region, label in zip(region_sequence, label_sequence):
         dz = np.sign(dz) * abs(dy) * rotate_ratio
         dx = np.clip(dx, x_min, x_max)
         spine_point = prev_point + np.array([dx, dy, dz])
-
         spine_point[2] = max(spine_point[2], z_min)
         spine_point[0] = np.clip(spine_point[0], x_min, x_max)
 
     vertebrae_coords.append(spine_point)
     vertebrae_labels.append(label)
-
+    used_coords.add(tuple(np.round(spine_point, 5)))
 
 print("\n=== Vertebrae Placement Log ===")
 for label, coord in zip(vertebrae_labels, vertebrae_coords):
@@ -160,11 +179,7 @@ region_shapes = {
 
 for i, coord in enumerate(vertebrae_coords):
     label = vertebrae_labels[i]
-    if label.startswith("Co"):
-        region = "Co"
-    else:
-        region = label[0]
-
+    region = 'Co' if label.startswith("Co") else label[0]
     color = colors.get(region, 'red')
     shape = region_shapes.get(region, {'radius': 0.01, 'height': 0.005})
 
@@ -178,10 +193,7 @@ for i, coord in enumerate(vertebrae_coords):
 for i in range(len(vertebrae_coords) - 1):
     p1, p2 = vertebrae_coords[i], vertebrae_coords[i + 1]
     label = vertebrae_labels[i]
-    if label.startswith("Co"):
-        region = "Co"
-    else:
-        region = label[0]
+    region = 'Co' if label.startswith("Co") else label[0]
     color = colors.get(region, 'red')
     line = pv.Line(p1, p2)
     plotter.add_mesh(line, color=color, line_width=4)
