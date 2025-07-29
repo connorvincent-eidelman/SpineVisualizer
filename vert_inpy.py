@@ -201,3 +201,41 @@ for i in range(len(vertebrae_coords) - 1):
 plotter.add_axes()
 plotter.show_bounds(grid='front', location='outer')
 plotter.show(title="Full Vertebrae Spine with Angle Constraints", window_size=[1200, 900])
+
+def angle_between(p1, p2, p3):
+    v1 = np.array(p1) - np.array(p2)
+    v2 = np.array(p3) - np.array(p2)
+    v1 /= np.linalg.norm(v1)
+    v2 /= np.linalg.norm(v2)
+    dot = np.clip(np.dot(v1, v2), -1.0, 1.0)
+    return np.degrees(np.arccos(dot))
+
+# === Angle Deviation Analysis ===
+angles = []
+angle_labels = []
+
+for i in range(1, len(vertebrae_coords) - 1):
+    a, b, c = vertebrae_coords[i - 1], vertebrae_coords[i], vertebrae_coords[i + 1]
+    label = vertebrae_labels[i]
+    angle = angle_between(a, b, c)
+    angles.append(angle)
+    angle_labels.append(label)
+
+# Define approximate healthy curvature reference (in degrees)
+healthy_ranges = {
+    'C': (165, 175),  # slight inward curve
+    'T': (150, 165),  # thoracic kyphosis
+    'L': (160, 175),  # lumbar lordosis
+    'S': (165, 180),  # nearly straight
+    'Co': (170, 180)  # very straight
+}
+
+# === Deviation Report ===
+print("\n=== Deviation from Healthy Spine Curvature ===")
+for label, angle in zip(angle_labels, angles):
+    region = 'Co' if label.startswith("Co") else label[0]
+    lower, upper = healthy_ranges.get(region, (160, 180))
+    if not (lower <= angle <= upper):
+        deviation = angle - (lower if angle < lower else upper)
+        print(f"{label}: angle={angle:.2f}° → deviation of {deviation:+.2f}° from healthy range ({lower}–{upper}°)")
+
