@@ -1,6 +1,7 @@
 import pyvista as pv
 import numpy as np
 import trimesh
+from scipy.interpolate import splprep, splev
 
 # === Load and Orient Mesh ===
 tm_mesh = trimesh.load("/Users/connorv-e/Desktop/spinevis/modeling/BODY.obj")
@@ -125,12 +126,14 @@ for region, label in zip(region_sequence, label_sequence):
                     break
 
         if not fallback_found:
-            print(f"Warning: fallback failed for {label}, inserting synthetic offset.")
-            last_point = vertebrae_coords[-1]
-            spine_point = last_point + np.array([0.0, y_step_model, -0.001])
-            vertebrae_coords.append(spine_point)
+            print(f"Warning: fallback failed for {label}, using midpoint strategy.")
+            if len(vertebrae_coords) >= 2:
+                midpoint = (vertebrae_coords[-1] + vertebrae_coords[-2]) / 2.0
+            else:
+                midpoint = vertebrae_coords[-1] + np.array([0.0, y_step_model, -0.001])
+            vertebrae_coords.append(midpoint)
             vertebrae_labels.append(label)
-            used_coords.add(tuple(np.round(spine_point, 5)))
+            used_coords.add(tuple(np.round(midpoint, 5)))
             continue
 
     spine_point = candidates[np.argmax([p[2] for p in candidates])]
@@ -160,48 +163,30 @@ for region, label in zip(region_sequence, label_sequence):
     vertebrae_labels.append(label)
     used_coords.add(tuple(np.round(spine_point, 5)))
 
-print("\n=== Vertebrae Placement Log ===")
-for label, coord in zip(vertebrae_labels, vertebrae_coords):
-    print(f"{label}: x={coord[0]:.4f}, y={coord[1]:.4f}, z={coord[2]:.4f}")
-
 # === Visualization ===
 plotter = pv.Plotter()
 plotter.add_mesh(pv_mesh, opacity=0.3, color='white', show_edges=False)
 
-colors = {'C': 'blue', 'T': 'green', 'L': 'orange', 'S': 'purple', 'Co': 'gray'}
-region_shapes = {
-    'C': {'radius': 0.007, 'height': 0.005},
-    'T': {'radius': 0.01,  'height': 0.006},
-    'L': {'radius': 0.002, 'height': 0.007},
-    'S': {'radius': 0.004,  'height': 0.004},
-    'Co': {'radius': 0.001, 'height': 0.007}
-}
+# === Spline Fit & Curvature Analysis ===
+coords = np.array(vertebrae_coords)
+_, unique_indices = np.unique(coords, axis=0, return_index=True)
+coords = coords[np.sort(unique_indices)]
 
-for i, coord in enumerate(vertebrae_coords):
-    label = vertebrae_labels[i]
-    region = 'Co' if label.startswith("Co") else label[0]
-    color = colors.get(region, 'red')
-    shape = region_shapes.get(region, {'radius': 0.01, 'height': 0.005})
+if coords.shape[0] < 4:
+    raise ValueError(f"Too few unique points ({coords.shape[0]}) for spline fitting.")
+tck, u = splprep(coords.T, s=2.0)
+u_fine = np.linspace(0, 1, 500)
+spline_points = np.array(splev(u_fine, tck)).T
+d1 = np.array(splev(u_fine, tck, der=1)).T
+d2 = np.array(splev(u_fine, tck, der=2)).T
 
-    cylinder = pv.Cylinder(center=coord, direction=(1, 0, 0),
-                           radius=shape['radius'] * mesh_height,
-                           height=shape['height'] * mesh_height)
-    plotter.add_mesh(cylinder, color=color)
-    plotter.add_point_labels([coord], [label], font_size=30, text_color=color)
+curvature = np.linalg.norm(np.cross(d1, d2), axis=1) / np.linalg.norm(d1, axis=1)**3
+curvature = np.clip(curvature, 0, np.percentile(curvature, 99))
 
-# Add line through vertebrae
-for i in range(len(vertebrae_coords) - 1):
-    p1, p2 = vertebrae_coords[i], vertebrae_coords[i + 1]
-    label = vertebrae_labels[i]
-    region = 'Co' if label.startswith("Co") else label[0]
-    color = colors.get(region, 'red')
-    line = pv.Line(p1, p2)
-    plotter.add_mesh(line, color=color, line_width=4)
+curve_line = pv.Spline(spline_points)
+plotter.add_mesh(curve_line, scalars=curvature, cmap="coolwarm", line_width=5)
 
-plotter.add_axes()
-plotter.show_bounds(grid='front', location='outer')
-plotter.show(title="Full Vertebrae Spine with Angle Constraints", window_size=[1200, 900])
-
+# === Angle Deviation Analysis ===
 def angle_between(p1, p2, p3):
     v1 = np.array(p1) - np.array(p2)
     v2 = np.array(p3) - np.array(p2)
@@ -210,32 +195,22 @@ def angle_between(p1, p2, p3):
     dot = np.clip(np.dot(v1, v2), -1.0, 1.0)
     return np.degrees(np.arccos(dot))
 
-# === Angle Deviation Analysis ===
-angles = []
-angle_labels = []
+healthy_ranges = {
+    'C': (165, 175), 'T': (150, 165), 'L': (160, 175), 'S': (165, 180), 'Co': (170, 180)
+}
 
 for i in range(1, len(vertebrae_coords) - 1):
     a, b, c = vertebrae_coords[i - 1], vertebrae_coords[i], vertebrae_coords[i + 1]
     label = vertebrae_labels[i]
     angle = angle_between(a, b, c)
-    angles.append(angle)
-    angle_labels.append(label)
-
-# Define approximate healthy curvature reference (in degrees)
-healthy_ranges = {
-    'C': (165, 175),  # slight inward curve
-    'T': (150, 165),  # thoracic kyphosis
-    'L': (160, 175),  # lumbar lordosis
-    'S': (165, 180),  # nearly straight
-    'Co': (170, 180)  # very straight
-}
-
-# === Deviation Report ===
-print("\n=== Deviation from Healthy Spine Curvature ===")
-for label, angle in zip(angle_labels, angles):
     region = 'Co' if label.startswith("Co") else label[0]
     lower, upper = healthy_ranges.get(region, (160, 180))
+    deviation = 0.0
     if not (lower <= angle <= upper):
         deviation = angle - (lower if angle < lower else upper)
-        print(f"{label}: angle={angle:.2f}° → deviation of {deviation:+.2f}° from healthy range ({lower}–{upper}°)")
+        plotter.add_point_labels([b], [f"{label}\n{deviation:+.1f}°"] , point_size=10, font_size=12, text_color='red', shape_opacity=0.2)
 
+# === Show ===
+plotter.add_axes()
+plotter.show_bounds(grid='front', location='outer')
+plotter.show(title="Spinal Analysis: Spline Curvature & Angle Deviations", window_size=[1200, 900])
