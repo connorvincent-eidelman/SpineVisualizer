@@ -25,26 +25,21 @@ body_height_cm = 185.42
 skull_height_cm = body_height_cm * 0.13
 c1_offset_cm = skull_height_cm / 1.5
 
-# Vertebrae counts per region
 vertebrae_counts = {'C': 7, 'T': 12, 'L': 5, 'S': 5, 'Co': 4}
 region_spacing_cm = {'C': 1.71, 'T': 2.25, 'L': 3.4, 'S': 1.5, 'Co': 0.8}
 
-# === Get Vertex Data ===
 verts = pv_mesh.points
 y_vals = verts[:, 1]
 mesh_height = np.max(y_vals) - np.min(y_vals)
 scale_ratio = body_height_cm / mesh_height
 
-# === Skull Top is min Y (flipped model) ===
 top_index = np.argmin(y_vals)
 skull_top = verts[top_index]
 top_y = skull_top[1]
 
-# === Scale C1 offset into model units ===
 c1_offset_model = c1_offset_cm / scale_ratio
 c1_y = top_y + c1_offset_model
 
-# === C1 Placement ===
 x_min, x_max = -0.15, 0
 y_tolerance = 0.01
 z_min = 0.1
@@ -63,7 +58,6 @@ if len(c1_candidates) == 0:
 c1_index = np.argmax(c1_candidates[:, 2])
 c1_point = c1_candidates[c1_index]
 
-# === Build Vertebrae Spine ===
 vertebrae_coords = [c1_point]
 vertebrae_labels = ['C1']
 used_coords = {tuple(np.round(c1_point, 5))}
@@ -112,29 +106,17 @@ for region, label in zip(region_sequence, label_sequence):
     candidates = [c for c in candidates if all(np.linalg.norm(c - np.array(p)) >= min_distance for p in used_coords)]
 
     if len(candidates) == 0:
-        fallback_found = False
-        y_diffs = np.abs(verts[:, 1] - current_y)
-        fallback_indices = np.argsort(y_diffs)
-
-        for idx in fallback_indices:
-            point = verts[idx]
-            if (x_min <= point[0] <= x_max) and (point[2] >= z_thresh):
-                if all(np.linalg.norm(point - np.array(p)) >= min_distance for p in used_coords):
-                    candidates = [point]
-                    fallback_found = True
-                    print(f"Fallback used for {label}: closest available unique point selected.")
-                    break
-
-        if not fallback_found:
-            print(f"Warning: fallback failed for {label}, using midpoint strategy.")
-            if len(vertebrae_coords) >= 2:
-                midpoint = (vertebrae_coords[-1] + vertebrae_coords[-2]) / 2.0
-            else:
-                midpoint = vertebrae_coords[-1] + np.array([0.0, y_step_model, -0.001])
-            vertebrae_coords.append(midpoint)
-            vertebrae_labels.append(label)
-            used_coords.add(tuple(np.round(midpoint, 5)))
-            continue
+        print(f"Synthetic fallback used for {label}.")
+        if len(vertebrae_coords) >= 2:
+            direction = vertebrae_coords[-1] - vertebrae_coords[-2]
+            direction = direction / np.linalg.norm(direction) * y_step_model
+            fallback_point = vertebrae_coords[-1] + direction
+        else:
+            fallback_point = vertebrae_coords[-1] + np.array([0.0, y_step_model, 0.0])
+        vertebrae_coords.append(fallback_point)
+        vertebrae_labels.append(label)
+        used_coords.add(tuple(np.round(fallback_point, 5)))
+        continue
 
     spine_point = candidates[np.argmax([p[2] for p in candidates])]
 
@@ -150,12 +132,9 @@ for region, label in zip(region_sequence, label_sequence):
 
     if angle > max_angle_rad:
         rotate_ratio = np.tan(max_angle_rad)
-        dz = spine_point[2] - prev_point[2]
-        dx = spine_point[0] - prev_point[0]
-        dy = spine_point[1] - prev_point[1]
-        dz = np.sign(dz) * abs(dy) * rotate_ratio
-        dx = np.clip(dx, x_min, x_max)
-        spine_point = prev_point + np.array([dx, dy, dz])
+        dz = np.sign(spine_point[2] - prev_point[2]) * abs(y_step_model) * rotate_ratio
+        dx = np.clip(spine_point[0] - prev_point[0], x_min, x_max)
+        spine_point = prev_point + np.array([dx, y_step_model, dz])
         spine_point[2] = max(spine_point[2], z_min)
         spine_point[0] = np.clip(spine_point[0], x_min, x_max)
 
@@ -163,11 +142,13 @@ for region, label in zip(region_sequence, label_sequence):
     vertebrae_labels.append(label)
     used_coords.add(tuple(np.round(spine_point, 5)))
 
-# === Visualization ===
+print("\n=== Vertebrae Placement Log ===")
+for label, coord in zip(vertebrae_labels, vertebrae_coords):
+    print(f"{label}: x={coord[0]:.4f}, y={coord[1]:.4f}, z={coord[2]:.4f}")
+
 plotter = pv.Plotter()
 plotter.add_mesh(pv_mesh, opacity=0.3, color='white', show_edges=False)
 
-# === Spline Fit & Curvature Analysis ===
 coords = np.array(vertebrae_coords)
 _, unique_indices = np.unique(coords, axis=0, return_index=True)
 coords = coords[np.sort(unique_indices)]
@@ -186,7 +167,6 @@ curvature = np.clip(curvature, 0, np.percentile(curvature, 99))
 curve_line = pv.Spline(spline_points)
 plotter.add_mesh(curve_line, scalars=curvature, cmap="coolwarm", line_width=5)
 
-# === Angle Deviation Analysis ===
 def angle_between(p1, p2, p3):
     v1 = np.array(p1) - np.array(p2)
     v2 = np.array(p3) - np.array(p2)
@@ -205,12 +185,10 @@ for i in range(1, len(vertebrae_coords) - 1):
     angle = angle_between(a, b, c)
     region = 'Co' if label.startswith("Co") else label[0]
     lower, upper = healthy_ranges.get(region, (160, 180))
-    deviation = 0.0
     if not (lower <= angle <= upper):
         deviation = angle - (lower if angle < lower else upper)
         plotter.add_point_labels([b], [f"{label}\n{deviation:+.1f}°"] , point_size=10, font_size=12, text_color='red', shape_opacity=0.2)
 
-# === Show ===
 plotter.add_axes()
 plotter.show_bounds(grid='front', location='outer')
 plotter.show(title="Spinal Analysis: Spline Curvature & Angle Deviations", window_size=[1200, 900])
