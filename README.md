@@ -1,6 +1,6 @@
-# SpineVis: 3D Spine Modeling & Analysis Toolkit
+# SpineVisualizer: 3D Spine Modeling & Analysis Toolkit
 
-SpineVis is a toolkit for extracting, labeling, analyzing, and visualizing human spine geometry from 3D body scans and multi-camera video. It supports Blender scripting for mesh processing, PyVista for 3D visualization, and OpenCV/Mediapipe for pose estimation.
+SpineVisualizer is a toolkit for extracting, labeling, analyzing, and visualizing human spine geometry from 3D body scans and multi-camera video. It supports Blender scripting for mesh processing, PyVista for 3D visualization, and OpenCV/Mediapipe for pose estimation.
 
 ---
 
